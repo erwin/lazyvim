@@ -31,30 +31,48 @@ vim.api.nvim_create_autocmd("BufReadPost", {
     local home = vim.env.HOME
 
     -- 2. Fast Path: Only check files inside your home directory or .config
-    -- This stops Vim from lagging when opening system files (/etc/) or project repos
     if not filepath:find(home, 1, true) then
       return
     end
 
-    -- 3. Run the source-path check asynchronously/lightly via vim.fn.system
-    if vim.fn.executable("chezmoi") == 1 then
-      vim.fn.system({ "chezmoi", "source-path", filepath })
-
-      -- If exit code is 0, the file is tracked by chezmoi
-      if vim.v.shell_error == 0 then
-        -- Force the file to be Read-Only to protect it
-        vim.bo[event.buf].readonly = true
-
-        -- Throw a gorgeous LazyVim notification
-        vim.notify(
-          "This file is managed by Chezmoi!\nOpened as Read-Only. Edit source file instead.",
-          vim.log.levels.WARN,
-          {
-            title = "Chezmoi Protector",
-            timeout = false,
-          }
-        )
+    -- Core function that handles the check and notification
+    local function run_chezmoi_check()
+      if not vim.api.nvim_buf_is_valid(event.buf) then
+        return
       end
+
+      if vim.fn.executable("chezmoi") == 1 then
+        vim.fn.system({ "chezmoi", "source-path", filepath })
+
+        if vim.v.shell_error == 0 then
+          vim.bo[event.buf].readonly = true
+
+          vim.notify(
+            "This file is managed by Chezmoi!\nOpened as Read-Only. Edit source file instead.",
+            vim.log.levels.WARN,
+            {
+              title = "Chezmoi Protector",
+              timeout = false,
+            }
+          )
+        end
+      end
+    end
+
+    -- 3. Check if Neovim is still starting up
+    -- vim.v.vim_did_enter is 0 during startup, and 1 after the UI is ready
+    if vim.v.vim_did_enter == 0 then
+      -- If starting up from CLI, wait for Lazy.nvim to finish loading plugins
+      vim.api.nvim_create_autocmd("User", {
+        pattern = "VeryLazy",
+        once = true,
+        callback = function()
+          vim.schedule(run_chezmoi_check)
+        end,
+      })
+    else
+      -- If Neovim is already running (e.g. :e file), run it immediately
+      vim.schedule(run_chezmoi_check)
     end
   end,
 })
